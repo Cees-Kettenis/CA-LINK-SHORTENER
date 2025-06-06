@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Malaysia CA URL Shortener</title>
+    <style>
+      /* ------------------------------------------------------------
+       Dark‐mode base styles
+    ------------------------------------------------------------ */
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background-color: #212121e6;
+        color: #e0e0e0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+      }
+
+      /* ------------------------------------------------------------
+       Container to center everything
+    ------------------------------------------------------------ */
+      .container {
+        width: 90%;
+        max-width: 800px;
+        margin-top: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      /* ------------------------------------------------------------
+       Logo styling
+    ------------------------------------------------------------ */
+      #logo {
+        width: 200px;
+        height: auto;
+        margin-bottom: 20px;
+      }
+
+      /* ------------------------------------------------------------
+       Heading
+    ------------------------------------------------------------ */
+      #inputs {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 10px;
+      }
+      h3 {
+        margin-bottom: 16px;
+        font-size: 1.2rem;
+        text-align: center;
+        color: #ffffff;
+      }
+      #downloadBtn {
+        padding: 8px 12px;
+        border: none;
+        border-radius: 4px;
+        background-color: #1e1e1e;
+        color: #fff;
+        cursor: pointer;
+        font-size: 1rem;
+        margin-left: 10px;
+      }
+      #downloadBtn:hover {
+        background-color: #444;
+      }
+      #downloadBtn:active {
+        background-color: #555;
+      }
+
+      /* ------------------------------------------------------------
+       File input and button styling
+    ------------------------------------------------------------ */
+      input[type="file"] {
+        padding: 8px 12px;
+        margin-right: 7px;
+        border: 1px solid #333;
+        border-radius: 4px;
+        background-color: #1f1f1f;
+        color: #e0e0e0;
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      input[type="file"]::-webkit-file-upload-button {
+        background-color: #333;
+        color: #fff;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      input[type="file"]::-moz-file-upload-button {
+        background-color: #333;
+        color: #fff;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      /* ------------------------------------------------------------
+       Output <pre> styling
+    ------------------------------------------------------------ */
+      h4 {
+        margin-bottom: 0px;
+        margin-top: 25px;
+      }
+      #output {
+        width: 100%;
+        background-color: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 4px;
+        color: #e0e0e0;
+        padding: 12px;
+        box-sizing: border-box;
+        white-space: pre-wrap;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 0.95rem;
+        height: 300px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <img id="logo" src="./assets/AMBASSADOR.webp" alt="Logo" />
+      <div id="inputs">
+        <h3>Select an Excel file or</h3>
+        <button id="downloadBtn">Download Template</button>
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" disabled="true" />
+      <h4>Processing logs:</h4>
+      <pre id="output">Loading…</pre>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script>
+      const API_KEY = "";
+      const fileInput = document.getElementById("fileInput");
+      const output = document.getElementById("output");
+      const BASE_URL = "https://api.tinyurl.com/";
+      let EXISTING_DATA = [];
+
+      // Fetch all existing tiny URLs once on page loads because updating via the API is currently not supported.
+      document.addEventListener("DOMContentLoaded", () => {
+        if (API_KEY === "") {
+          output.textContent =
+            "API key is missing! Add it to the script. And refresh the page.";
+          return;
+        }
+        fetch(BASE_URL + "urls/available", {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            EXISTING_DATA = data.data || [];
+            fileInput.disabled = false;
+
+            output.textContent = "Ready to process your Excel file!";
+          })
+          .catch((err) => {
+            console.error("Error fetching existing tiny URLs:", err);
+          });
+      });
+
+      // Handle file input change event
+      fileInput.addEventListener("change", async (event) => {
+        output.textContent = "";
+        const file = event.target.files[0];
+        if (!file) return;
+
+        // 1. Read the uploaded Excel as ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const jsonRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+        if (jsonRows.length === 0) {
+          output.textContent = "No data found in the sheet.";
+          return;
+        }
+
+        // 2. Normalize each row’s keys to lowercase
+        const normalized = jsonRows.map((row) => {
+          const lowerObj = {};
+          Object.keys(row).forEach((key) => {
+            lowerObj[key.trim().toLowerCase()] = row[key];
+          });
+          return lowerObj;
+        });
+
+        // 3. Ensure the required columns exist
+        const headers = Object.keys(normalized[0]);
+        const required = ["url", "alias", "tinyurl"];
+        const missing = required.filter((col) => !headers.includes(col));
+        if (missing.length) {
+          output.textContent = `Missing columns: ${missing.join(", ")}`;
+          return;
+        }
+
+        // 4. Process every row sequentially and collect results
+        const all_rows_for_excel = [];
+
+        // Helper: wrap fetch/create into a Promise that always resolves with an object
+        async function processRow(row) {
+          const aliasLower = row.alias.trim().toLowerCase();
+          const existingItem = EXISTING_DATA.find(
+            (item) => item.alias?.toLowerCase() === aliasLower
+          );
+
+          if (existingItem) {
+            // If it already exists, just reuse the tiny_url
+            output.textContent += `\n[SKIP] "${row.alias}" already exists → ${existingItem.tiny_url}`;
+            return {
+              url: row.url,
+              alias: row.alias,
+              tinyurl: existingItem.tiny_url,
+            };
+          } else {
+            // Otherwise, call the create endpoint
+            output.textContent += `\n[CREATE] "${row.alias}" → sending request...`;
+
+            try {
+              const response = await fetch(BASE_URL + "create", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  domain: "tinyurl.com",
+                  url: row.url,
+                  alias: row.alias,
+                }),
+              });
+
+              if (!response.ok) {
+                // read the error body to JSON before throwing
+                const errorText = await response.json();
+
+                throw errorText;
+              }
+
+              const result = await response.json();
+              output.textContent += `\n[SUCCESS] "${row.alias}" → ${result.tiny_url}`;
+              return {
+                url: row.url,
+                alias: row.alias,
+                tinyurl: result.tiny_url,
+              };
+            } catch (err) {
+              // err.message now contains both status and body text
+              console.log(err);
+
+              output.textContent += `\n[ERROR] "${row.alias}" → ${err.errors[0]}`;
+
+              return {
+                url: row.url,
+                alias: row.alias,
+                tinyurl: `ERROR: ${err.errors[0]}`,
+              };
+            }
+          }
+        }
+
+        // Run them in sequence (so API rate‐limits / ordering are simpler)
+        for (let row of normalized) {
+          const resultObj = await processRow(row);
+          all_rows_for_excel.push(resultObj);
+        }
+
+        // 5. Once all rows are processed, generate a new Excel and download it
+        output.textContent += "\n\nGenerating new Excel file...";
+        // Convert JSON array → SheetJS worksheet
+        const newSheet = XLSX.utils.json_to_sheet(all_rows_for_excel);
+        // Create a new workbook and append the worksheet
+        const newBook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(newBook, newSheet, "TinyURL Results");
+
+        // Finally, write the file and trigger a download
+        // The filename can be whatever you like. Here we use "results.xlsx".
+        XLSX.writeFile(newBook, "results.xlsx");
+      });
+
+      document
+        .getElementById("downloadBtn")
+        .addEventListener("click", function () {
+          // 1. Define the header row
+          const header = [["url", "alias", "tinyurl"]];
+
+          // 2. Create a new worksheet from the header
+          const worksheet = XLSX.utils.aoa_to_sheet(header);
+
+          // 3. Create a new workbook and append the worksheet
+          const workbook = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+
+          // 4. Trigger download
+          XLSX.writeFile(workbook, "empty_with_header.xlsx");
+        });
+    </script>
+  </body>
+</html>
