@@ -134,7 +134,7 @@
         <h3>Select an Excel file or</h3>
         <button id="downloadBtn">Download Template</button>
       </div>
-      <input type="file" id="fileInput" accept=".xlsx,.xls" disabled="true" />
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
       <h4>Processing logs:</h4>
       <pre id="output">Loading…</pre>
     </div>
@@ -149,6 +149,9 @@
 
       // Fetch all existing tiny URLs once on page loads because updating via the API is currently not supported.
       document.addEventListener("DOMContentLoaded", () => {
+        //disable the file input until we fetch existing data
+        fileInput.disabled = true;
+
         if (API_KEY === "") {
           output.textContent =
             "API key is missing! Add it to the script. And refresh the page.";
