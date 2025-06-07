@@ -160,15 +160,57 @@
         fetch(BASE_URL + "urls/available", {
           headers: { Authorization: `Bearer ${API_KEY}` },
         })
-          .then((res) => res.json())
+          .then((res) => {
+            if (!res.ok) {
+              // try to read error body (JSON) for more context
+              return res
+                .json()
+                .catch(() => null)
+                .then((errBody) => {
+                  const msg =
+                    errBody && errBody.errors
+                      ? errBody.errors.join(", ")
+                      : `Status ${res.status}`;
+                  throw new Error(`Failed to load existing URLs: ${msg}`);
+                });
+            }
+            return res.json();
+          })
           .then((data) => {
             EXISTING_DATA = data.data || [];
-            fileInput.disabled = false;
+            fetch(BASE_URL + "urls/archived", {
+              headers: { Authorization: `Bearer ${API_KEY}` },
+            })
+              .then((res) => {
+                if (!res.ok) {
+                  // try to read error body (JSON) for more context
+                  return res
+                    .json()
+                    .catch(() => null)
+                    .then((errBody) => {
+                      const msg =
+                        errBody && errBody.errors
+                          ? errBody.errors.join(", ")
+                          : `Status ${res.status}`;
+                      throw new Error(`Failed to load archived URLs: ${msg}`);
+                    });
+                }
+                return res.json();
+              })
+              .then((data) => {
+                EXISTING_DATA = EXISTING_DATA.concat(data.data || []);
 
-            output.textContent = "Ready to process your Excel file!";
+                fileInput.disabled = false;
+                output.textContent = "Ready to process your Excel file!";
+              })
+              .catch((err) => {
+                console.error("Error fetching existing tiny URLs:", err);
+                output.textContent = `[ERROR] Could not load archived URLs: ${err.message}`;
+              });
           })
           .catch((err) => {
             console.error("Error fetching existing tiny URLs:", err);
+            output.textContent = `[ERROR] Could not load existing URLs: ${err.message}`;
           });
       });
 
